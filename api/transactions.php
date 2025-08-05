@@ -208,129 +208,249 @@ class Transactions
     }
 
     function addChargesAmenities()
-{
-    include "connection.php";
+    {
+        include "connection.php";
 
-    // Check if JSON exists in POST
-    if (!isset($_POST['json'])) {
-        echo json_encode(['status' => 'error', 'message' => 'No data sent']);
-        return;
+        // Check if JSON exists in POST
+        if (!isset($_POST['json'])) {
+            echo json_encode(['status' => 'error', 'message' => 'No data sent']);
+            return;
+        }
+
+        // Decode the incoming JSON
+        $json = json_decode($_POST['json'], true);
+
+        if (!isset($json['charges_category_id'], $json['charges_master_name'], $json['charges_master_price'])) {
+            echo json_encode(['status' => 'error', 'message' => 'Incomplete data']);
+            return;
+        }
+
+        $categoryId = $json['charges_category_id'];
+        $amenityName = $json['charges_master_name'];
+        $price = $json['charges_master_price'];
+
+        try {
+            $stmt = $conn->prepare("INSERT INTO tbl_charges_master (charges_category_id, charges_master_name, charges_master_price) VALUES (:categoryId, :name, :price)");
+            $stmt->bindParam(':categoryId', $categoryId);
+            $stmt->bindParam(':name', $amenityName);
+            $stmt->bindParam(':price', $price);
+            $success = $stmt->execute();
+
+            echo json_encode($success ? 'success' : 'fail');
+        } catch (PDOException $e) {
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+        }
     }
 
-    // Decode the incoming JSON
-$json = json_decode($_POST['json'], true);
+    function getChargesCategory()
+    {
+        include "connection.php";
 
-    if (!isset($json['charges_category_id'], $json['charges_master_name'], $json['charges_master_price'])) {
-        echo json_encode(['status' => 'error', 'message' => 'Incomplete data']);
-        return;
+        try {
+            $sql = "SELECT charges_category_id, charges_category_name FROM tbl_charges_category ORDER BY charges_category_name ASC";
+            $stmt = $conn->prepare($sql);
+            $stmt->execute();
+            $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            echo json_encode($result);
+        } catch (PDOException $e) {
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+        }
     }
 
-    $categoryId = $json['charges_category_id'];
-    $amenityName = $json['charges_master_name'];
-    $price = $json['charges_master_price'];
+    function saveAmenitiesCharges()
+    {
+        include "connection.php";
 
-    try {
-        $stmt = $conn->prepare("INSERT INTO tbl_charges_master (charges_category_id, charges_master_name, charges_master_price) VALUES (:categoryId, :name, :price)");
-        $stmt->bindParam(':categoryId', $categoryId);
-        $stmt->bindParam(':name', $amenityName);
-        $stmt->bindParam(':price', $price);
-        $success = $stmt->execute();
+        if (!isset($_POST['json'])) {
+            echo json_encode(['status' => 'error', 'message' => 'No data sent']);
+            return;
+        }
 
-        echo json_encode($success ? 'success' : 'fail');
-    } catch (PDOException $e) {
-        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
-    }
-}
+        $json = json_decode($_POST['json'], true);
 
-function getChargesCategory()
-{
-    include "connection.php";
-    
-    try {
-        $sql = "SELECT charges_category_id, charges_category_name FROM tbl_charges_category ORDER BY charges_category_name ASC";
-        $stmt = $conn->prepare($sql);
-        $stmt->execute();
-        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        echo json_encode($result);
-    } catch (PDOException $e) {
-        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
-    }
-}
+        if (!isset($json['items']) || !is_array($json['items'])) {
+            echo json_encode(['status' => 'error', 'message' => 'Invalid data format']);
+            return;
+        }
 
-function saveAmenitiesCharges()
-{
-    include "connection.php";
-    
-    if (!isset($_POST['json'])) {
-        echo json_encode(['status' => 'error', 'message' => 'No data sent']);
-        return;
-    }
+        try {
+            $conn->beginTransaction();
 
-    $json = json_decode($_POST['json'], true);
-    
-    if (!isset($json['items']) || !is_array($json['items'])) {
-        echo json_encode(['status' => 'error', 'message' => 'Invalid data format']);
-        return;
-    }
+            foreach ($json['items'] as $item) {
+                if (!isset($item['charges_category_id'], $item['charges_master_name'], $item['charges_master_price'])) {
+                    throw new Exception('Missing required fields');
+                }
 
-    try {
-        $conn->beginTransaction();
-        
-        foreach ($json['items'] as $item) {
-            if (!isset($item['charges_category_id'], $item['charges_master_name'], $item['charges_master_price'])) {
-                throw new Exception('Missing required fields');
+                $stmt = $conn->prepare("INSERT INTO tbl_charges_master (charges_category_id, charges_master_name, charges_master_price) VALUES (:categoryId, :name, :price)");
+                $stmt->bindParam(':categoryId', $item['charges_category_id']);
+                $stmt->bindParam(':name', $item['charges_master_name']);
+                $stmt->bindParam(':price', $item['charges_master_price']);
+                $stmt->execute();
             }
 
-            $stmt = $conn->prepare("INSERT INTO tbl_charges_master (charges_category_id, charges_master_name, charges_master_price) VALUES (:categoryId, :name, :price)");
-            $stmt->bindParam(':categoryId', $item['charges_category_id']);
-            $stmt->bindParam(':name', $item['charges_master_name']);
-            $stmt->bindParam(':price', $item['charges_master_price']);
-            $stmt->execute();
-        }
-        
-        $conn->commit();
-        echo 'success';
-    } catch (Exception $e) {
-        $conn->rollBack();
-        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
-    }
-}
-
-function updateAmenityCharges()
-{
-    include "connection.php";
-    
-    if (!isset($_POST['json'])) {
-        echo json_encode(['status' => 'error', 'message' => 'No data sent']);
-        return;
-    }
-
-    $json = json_decode($_POST['json'], true);
-    
-    if (!isset($json['charges_master_id'], $json['charges_master_name'], $json['charges_master_price'])) {
-        echo json_encode(['status' => 'error', 'message' => 'Missing required fields']);
-        return;
-    }
-
-    try {
-        $stmt = $conn->prepare("UPDATE tbl_charges_master SET charges_master_name = :name, charges_master_price = :price WHERE charges_master_id = :id");
-        $stmt->bindParam(':name', $json['charges_master_name']);
-        $stmt->bindParam(':price', $json['charges_master_price']);
-        $stmt->bindParam(':id', $json['charges_master_id']);
-        
-        $result = $stmt->execute();
-        
-        if ($result && $stmt->rowCount() > 0) {
+            $conn->commit();
             echo 'success';
-        } else {
-            echo json_encode(['status' => 'error', 'message' => 'No records updated']);
+        } catch (Exception $e) {
+            $conn->rollBack();
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
         }
-    } catch (PDOException $e) {
-        echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
     }
-}
+
+    function updateAmenityCharges()
+    {
+        include "connection.php";
+
+        if (!isset($_POST['json'])) {
+            echo json_encode(['status' => 'error', 'message' => 'No data sent']);
+            return;
+        }
+
+        $json = json_decode($_POST['json'], true);
+
+        if (!isset($json['charges_master_id'], $json['charges_master_name'], $json['charges_master_price'])) {
+            echo json_encode(['status' => 'error', 'message' => 'Missing required fields']);
+            return;
+        }
+
+        try {
+            $stmt = $conn->prepare("UPDATE tbl_charges_master SET charges_master_name = :name, charges_master_price = :price WHERE charges_master_id = :id");
+            $stmt->bindParam(':name', $json['charges_master_name']);
+            $stmt->bindParam(':price', $json['charges_master_price']);
+            $stmt->bindParam(':id', $json['charges_master_id']);
+
+            $result = $stmt->execute();
+
+            if ($result && $stmt->rowCount() > 0) {
+                echo 'success';
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'No records updated']);
+            }
+        } catch (PDOException $e) {
+            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
+        }
+    }
 
 
+    function createInvoice($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+
+        $billing_ids = $json["billing_ids"];
+        $employee_id = $json["employee_id"];
+        $payment_method_id = $json["payment_method_id"];
+        $invoice_status_id = $json["invoice_status_id"] ?? 1;
+
+        $invoice_date = date("Y-m-d");
+        $invoice_time = date("H:i:s");
+
+        foreach ($billing_ids as $billing_id) {
+            $stmt = $conn->prepare("SELECT billing_total_amount FROM tbl_billing WHERE billing_id = :billing_id");
+            $stmt->bindParam(':billing_id', $billing_id, PDO::PARAM_INT);
+            $stmt->execute();
+            $billing = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($billing) {
+                $invoice_total_amount = $billing["billing_total_amount"];
+
+                $insert = $conn->prepare("
+                INSERT INTO tbl_invoice (
+                    billing_id, employee_id, payment_method_id,
+                    invoice_date, invoice_time, invoice_total_amount, invoice_status_id
+                ) VALUES (
+                    :billing_id, :employee_id, :payment_method_id,
+                    :invoice_date, :invoice_time, :invoice_total_amount, :invoice_status_id
+                )
+            ");
+
+                $insert->bindParam(':billing_id', $billing_id, PDO::PARAM_INT);
+                $insert->bindParam(':employee_id', $employee_id, PDO::PARAM_INT);
+                $insert->bindParam(':payment_method_id', $payment_method_id, PDO::PARAM_INT);
+                $insert->bindParam(':invoice_date', $invoice_date);
+                $insert->bindParam(':invoice_time', $invoice_time);
+                $insert->bindParam(':invoice_total_amount', $invoice_total_amount, PDO::PARAM_INT);
+                $insert->bindParam(':invoice_status_id', $invoice_status_id, PDO::PARAM_INT);
+                $insert->execute();
+
+                $update = $conn->prepare("UPDATE tbl_billing SET billing_balance = 0 WHERE billing_id = :billing_id");
+                $update->bindParam(':billing_id', $billing_id, PDO::PARAM_INT);
+                $update->execute();
+            }
+        }
+
+        echo json_encode(["success" => true, "message" => "Invoices created successfully."]);
+    }
+    function getBookingsWithBillingStatus()
+    {
+        include "connection.php";
+
+        $query = "
+        SELECT 
+            b.booking_id,
+            b.reference_no,
+            b.booking_checkin_dateandtime,
+            b.booking_checkout_dateandtime,
+            CONCAT(c.customers_fname, ' ', c.customers_lname) AS customer_name,
+            bi.billing_id,
+            i.invoice_id,
+            i.invoice_status_id
+        FROM tbl_booking b
+        LEFT JOIN tbl_customers c ON b.customers_id = c.customers_id
+        LEFT JOIN tbl_billing bi ON b.booking_id = bi.booking_id
+        LEFT JOIN tbl_invoice i ON bi.billing_id = i.billing_id
+        ORDER BY b.booking_created_at DESC
+    ";
+
+        $stmt = $conn->prepare($query);
+        $stmt->execute();
+        $results = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode($results);
+    }
+
+    function getBookingInvoice($json)
+    {
+        include "connection.php";
+        $json = json_decode($json, true);
+        $booking_id = $json["booking_id"];
+
+        // Get invoice details
+        $query = "
+        SELECT 
+            a.booking_id,
+            a.reference_no,
+            CONCAT(b.customers_fname, ' ', b.customers_lname) AS customer_name,
+            c.billing_id,
+            c.billing_total_amount,
+            c.billing_balance,
+            c.billing_downpayment,
+            d.invoice_id,
+            d.invoice_date,
+            d.invoice_time,
+            d.invoice_total_amount,
+            e.payment_method_name,
+            f.employee_fname
+        FROM tbl_booking a
+        LEFT JOIN tbl_customers b ON a.customers_id = b.customers_id
+        LEFT JOIN tbl_billing c ON a.booking_id = c.booking_id
+        LEFT JOIN tbl_invoice d ON c.billing_id = d.billing_id
+        LEFT JOIN tbl_payment_method e ON d.payment_method_id = e.payment_method_id
+        LEFT JOIN tbl_employee f ON d.employee_id = f.employee_id
+        WHERE a.booking_id = :booking_id
+        LIMIT 1
+    ";
+
+        $stmt = $conn->prepare($query);
+        $stmt->bindParam(":booking_id", $booking_id, PDO::PARAM_INT);
+        $stmt->execute();
+        $invoice = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if ($invoice) {
+            echo json_encode($invoice);
+        } else {
+            echo json_encode(["error" => "Invoice not found."]);
+        }
+    }
 }
 
 $json = isset($_POST['json']) ? $_POST['json'] : 0;
@@ -353,7 +473,7 @@ switch ($operation) {
     case "bookingChargesList":
         $transactions->bookingChargesList();
         break;
-    case "addChargesAmenities": 
+    case "addChargesAmenities":
         $transactions->addChargesAmenities();
         break;
     case "getChargesCategory":
@@ -367,6 +487,15 @@ switch ($operation) {
         break;
     case "updateAmenityCharges":
         $transactions->updateAmenityCharges();
+        break;
+    case "createInvoice":
+        $transactions->createInvoice($json);
+        break;
+    case "getBookingsWithBillingStatus":
+        $transactions->getBookingsWithBillingStatus();
+        break;
+    case "getBookingInvoice":
+        $transactions->getBookingInvoice($json);
         break;
     default:
         echo "Invalid Operation";
