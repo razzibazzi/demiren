@@ -335,7 +335,6 @@ class Transactions
     {
         include "connection.php";
         $json = json_decode($json, true);
-
         $billing_ids = $json["billing_ids"];
         $employee_id = $json["employee_id"];
         $payment_method_id = $json["payment_method_id"];
@@ -345,41 +344,79 @@ class Transactions
         $invoice_time = date("H:i:s");
 
         foreach ($billing_ids as $billing_id) {
-            $stmt = $conn->prepare("SELECT billing_total_amount FROM tbl_billing WHERE billing_id = :billing_id");
-            $stmt->bindParam(':billing_id', $billing_id, PDO::PARAM_INT);
+            // 1. Get the booking_id linked to this billing_id
+            $stmt = $conn->prepare("SELECT booking_id FROM tbl_billing WHERE billing_id = :billing_id");
+            $stmt->bindParam(':billing_id', $billing_id);
             $stmt->execute();
-            $billing = $stmt->fetch(PDO::FETCH_ASSOC);
+            $billingRow = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            if ($billing) {
-                $invoice_total_amount = $billing["billing_total_amount"];
+            if (!$billingRow) continue;
 
-                $insert = $conn->prepare("
-                INSERT INTO tbl_invoice (
-                    billing_id, employee_id, payment_method_id,
-                    invoice_date, invoice_time, invoice_total_amount, invoice_status_id
-                ) VALUES (
-                    :billing_id, :employee_id, :payment_method_id,
-                    :invoice_date, :invoice_time, :invoice_total_amount, :invoice_status_id
-                )
-            ");
+            $booking_id = $billingRow["booking_id"];
 
-                $insert->bindParam(':billing_id', $billing_id, PDO::PARAM_INT);
-                $insert->bindParam(':employee_id', $employee_id, PDO::PARAM_INT);
-                $insert->bindParam(':payment_method_id', $payment_method_id, PDO::PARAM_INT);
-                $insert->bindParam(':invoice_date', $invoice_date);
-                $insert->bindParam(':invoice_time', $invoice_time);
-                $insert->bindParam(':invoice_total_amount', $invoice_total_amount, PDO::PARAM_INT);
-                $insert->bindParam(':invoice_status_id', $invoice_status_id, PDO::PARAM_INT);
-                $insert->execute();
+            // 2. Calculate room charges
+            $roomQuery = $conn->prepare("
+            SELECT SUM(c.room_price) AS room_total
+            FROM tbl_booking_room b
+            JOIN tbl_rooms c ON b.roomnumber_id = c.room_id
+            WHERE b.booking_id = :booking_id
+        ");
+            $roomQuery->bindParam(':booking_id', $booking_id);
+            $roomQuery->execute();
+            $room_total = $roomQuery->fetchColumn() ?: 0;
 
-                $update = $conn->prepare("UPDATE tbl_billing SET billing_balance = 0 WHERE billing_id = :billing_id");
-                $update->bindParam(':billing_id', $billing_id, PDO::PARAM_INT);
-                $update->execute();
-            }
+            // 3. Calculate additional/other charges
+            $chargesQuery = $conn->prepare("
+            SELECT SUM(d.booking_charges_price * d.booking_charges_quantity) AS charge_total
+            FROM tbl_booking_charges d
+            JOIN tbl_booking_room b ON d.booking_room_id = b.booking_room_id
+            WHERE b.booking_id = :booking_id
+        ");
+            $chargesQuery->bindParam(':booking_id', $booking_id);
+            $chargesQuery->execute();
+            $charge_total = $chargesQuery->fetchColumn() ?: 0;
+
+            // 4. Final total = rooms + other charges
+            $final_total = $room_total + $charge_total;
+
+            // 5. Update billing total and balance
+            $updateBilling = $conn->prepare("
+            UPDATE tbl_billing 
+            SET billing_total_amount = :total, billing_balance = :total
+            WHERE billing_id = :billing_id
+        ");
+            $updateBilling->bindParam(':total', $final_total);
+            $updateBilling->bindParam(':billing_id', $billing_id);
+            $updateBilling->execute();
+
+            // 6. Create invoice
+            $insert = $conn->prepare("
+            INSERT INTO tbl_invoice (
+                billing_id, employee_id, payment_method_id,
+                invoice_date, invoice_time, invoice_total_amount, invoice_status_id
+            ) VALUES (
+                :billing_id, :employee_id, :payment_method_id,
+                :invoice_date, :invoice_time, :invoice_total_amount, :invoice_status_id
+            )
+        ");
+
+            $insert->bindParam(':billing_id', $billing_id);
+            $insert->bindParam(':employee_id', $employee_id);
+            $insert->bindParam(':payment_method_id', $payment_method_id);
+            $insert->bindParam(':invoice_date', $invoice_date);
+            $insert->bindParam(':invoice_time', $invoice_time);
+            $insert->bindParam(':invoice_total_amount', $final_total);
+            $insert->bindParam(':invoice_status_id', $invoice_status_id);
+            $insert->execute();
+
+            // 7. Optionally zero out billing balance (if paid in full)
+            $conn->prepare("UPDATE tbl_billing SET billing_balance = 0 WHERE billing_id = :billing_id")
+                ->execute([':billing_id' => $billing_id]);
         }
 
-        echo json_encode(["success" => true, "message" => "Invoices created successfully."]);
+        echo json_encode(["success" => true, "message" => "Invoices created with updated charges."]);
     }
+
     function getBookingsWithBillingStatus()
     {
         include "connection.php";
